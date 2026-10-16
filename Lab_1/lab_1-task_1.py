@@ -39,4 +39,5 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
                     print(f"Ricevuto: ECHO -> Risposto: {testo}")
 
                 else:
-                    conn.sendall(b"Errore: Invia 'PING' o 'ECHO <testo>'\n")
+                    conn.sendall(b"ERR\n")
+                    print(f"Ricevuto comando non valido ({data}) -> Risposto: ERR")
