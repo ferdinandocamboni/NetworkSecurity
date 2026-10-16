@@ -14,19 +14,29 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
         conn, addr = server_socket.accept()
         with conn:
             print(f"Connessione ricevuta da: {addr}")
-            data = conn.recv(1024).decode('utf-8').strip()
+            while True:
+                raw_data = conn.recv(1024)
+                # Se raw_data è vuoto, il client ha chiuso la connessione
+                if not raw_data:
+                    print(f"Connessione chiusa da: {addr}")
+                    break
+                    # Usiamo rstrip() per rimuovere solo gli \n e \r finali, non gli spazi in mezzo
+                data = raw_data.decode('utf-8').rstrip()
 
-            if data.upper() == "PING":
-                conn.sendall(b"PONG\n")
-                print("Ricevuto: PING -> Risposto: PONG")
-            else:
-                conn.sendall(b"Errore: Invia 'PING'\n")
+                if not data:
+                    continue
 
+                if data.upper() == "PING":
+                    conn.sendall(b"PONG\n")
+                    print("Ricevuto: PING -> Risposto: PONG")
+                elif data.upper().startswith("ECHO "):
+                    # split(' ', 1) divide la stringa al MASSIMO 1 volta al primo spazio
+                    parti = data.split(' ', 1)
+                    testo = parti[1]  # Prende tutto il testo dopo il primo spazio
 
+                    # Inviamo il testo indietro codificandolo in byte
+                    conn.sendall(f"{testo}\n".encode('utf-8'))
+                    print(f"Ricevuto: ECHO -> Risposto: {testo}")
 
-
-if __name__ == "__main__":
-    try:
-        avvia_server_ping()
-    except KeyboardInterrupt:
-        print("\nChiusura del server in corso...")
+                else:
+                    conn.sendall(b"Errore: Invia 'PING' o 'ECHO <testo>'\n")
