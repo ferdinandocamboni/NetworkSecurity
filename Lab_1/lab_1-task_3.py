@@ -1,7 +1,7 @@
-import os, ssl, json, secrets
+import os, ssl, json, secrets, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.cookies import SimpleCookie
-
+from urllib.parse import urlparse
 # Recupera il percorso della cartella attuale (Lab_1)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 cert_path = os.path.join(BASE_DIR, '..', 'cert.pem')
@@ -10,86 +10,132 @@ ca_path = os.path.join(BASE_DIR, '..', 'ca.crt')
 
 sessions = {}
 
-
 class TLSHandler(BaseHTTPRequestHandler):
 
-    def send_json(self, status_code, data):
+  def get_session_id(self):
 
-        response_bytes = json.dumps(data).encode("utf-8")
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(response_bytes)
+    cookie_header = self.headers.get('Cookie')
+    if not cookie_header:
+      return None
+    cookie = SimpleCookie(cookie_header)
+    if 'session_id' in cookie:
+      return cookie['session_id'].value
+    return None
 
-    def get_session_user(self):
+  def extract_client_cn(self):
 
-        cookie_header = self.headers.get("Cookie")
-        if not cookie_header:
-            return None
-
-        cookie = SimpleCookie(cookie_header)
-        if "session_id" in cookie:
-            session_id = cookie["session_id"].value
-            return sessions.get(session_id)
+    try:
+      client_cert = self.connection.getpeercert()
+      if not client_cert:
         return None
 
-    def do_GET(self):
-        if self.path == "/":
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"200 OK\n")
+      for rdn in client_cert.get('subject', ()):
+        for key, value in rdn:
+          if key == 'commonName':
+            return value
+    except Exception:
+      pass
+    return None
 
-        elif self.path == "/me":
-            user = self.get_session_user()
-            if user:
-                self.send_json(200, {"user": user})
-            else:
-                self.send_json(401, {"error": "Unauthorized"})
+  def do_GET(self):
+    path = urlparse(self.path).path
 
-        else:
-            self.send_json(404, {"error": "Not Found"})
+    if path == '/':
+      self.send_response(200)
+      self.end_headers()
+      self.wfile.write(b'200 OK\n')
 
-    def do_POST(self):
-        if self.path == "/login":
-            try:
-                content_length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(content_length)
-                data = json.loads(body.decode("utf-8"))
-                user = data.get("user")
-                password = data.get("password")
-            except Exception:
-                self.send_json(400, {"error": "Bad Request"})
-                return
+    elif path == '/me':
+      session_id = self.get_session_id()
+      if session_id and session_id in sessions:
+        username = sessions[session_id]
+        response_data = json.dumps({'user': username}).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(response_data)
+      else:
+        self.send_response(401)
+        self.end_headers()
 
-            if password == "netsec" and user and isinstance(user, str):
+    elif path == '/whoami':
+      cn = self.extract_client_cn()
+      if cn:
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(cn.encode('utf-8'))
+      else:
+        # Se acceduto senza certificato mTLS valido
+        self.send_response(401)
+        self.end_headers()
 
-                session_id = secrets.token_hex(16)
-                sessions[session_id] = user
+    else:
+      self.send_response(404)
+      self.end_headers()
 
-                self.send_response(200)
+  def do_POST(self):
+    path = urlparse(self.path).path
 
-                self.send_header(
-                    "Set-Cookie", f"session_id={session_id}; Secure; HttpOnly; Path=/")
+    if path == '/login':
+      try:
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length)
+        data = json.loads(body.decode('utf-8'))
+        username = data.get('user')
+        password = data.get('password')
+      except Exception:
+        self.send_response(400)
+        self.end_headers()
+        return
 
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"message": "Logged in"}).encode("utf-8"))
-            else:
+      if password == 'netsec' and username:
+        session_id = secrets.token_hex(16)
+        sessions[session_id] = username
 
-                self.send_json(401, {"error": "Unauthorized"})
+        cookie_header = (
+            f'session_id={session_id}; Secure; HttpOnly; Path=/'
+        )
 
-        else:
-            self.send_json(404, {"error": "Not Found"})
+        self.send_response(200)
+        self.send_header('Set-Cookie', cookie_header)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({'status': 'ok'}).encode('utf-8'))
+      else:
+        self.send_response(401)
+        self.end_headers()
 
+    else:
+      self.send_response(404)
+      self.end_headers()
 
-if __name__ == '__main__':
+def run_server_8443():
+
   server = HTTPServer(('0.0.0.0', 8443), TLSHandler)
-
   context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-  # Uso dei percorsi dinamici calcolati in alto
+  context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+  server.socket = context.wrap_socket(server.socket, server_side=True)
+  print('HTTPS Server running on port 8443...')
+  server.serve_forever()
+
+def run_server_8444():
+
+  server = HTTPServer(('0.0.0.0', 8444), TLSHandler)
+  context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
   context.load_cert_chain(certfile=cert_path, keyfile=key_path)
 
-  server.socket = context.wrap_socket(server.socket, server_side=True)
+  # Configurazione verifica certificato client tramite CA
+  context.load_verify_locations(cafile=ca_path)
+  context.verify_mode = ssl.CERT_REQUIRED
 
-  print('HTTPS Server listening on port 8443...')
+  server.socket = context.wrap_socket(server.socket, server_side=True)
+  print('mTLS Server running on port 8444...')
   server.serve_forever()
+
+if __name__ == '__main__':
+
+  thread_8443 = threading.Thread(target=run_server_8443, daemon=True)
+  thread_8443.start()
+
+  run_server_8444()
