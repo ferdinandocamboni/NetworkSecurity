@@ -8,7 +8,7 @@ c2 = bytes(pkts[478][Dot11CCMP].data)[:-8]  # 237 byte  (pacchetto 479)
 
 # Calcola C1 XOR C2 (= P1 XOR P2) sui primi 237 byte
 xor_p1_p2 = bytes(a ^ b for a, b in zip(c1, c2))
-with open("expense-form.txt", "rb") as f:
+with open("expense-formq.txt", "rb") as f:
     form_bytes = f.read()
 
 # Cerca l'offset in cui P1 (expense-form_2.txt) rivela testo ASCII leggibile in P2
