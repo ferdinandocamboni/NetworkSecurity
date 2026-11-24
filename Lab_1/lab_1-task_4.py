@@ -34,11 +34,12 @@ async def app(scope, receive, send):
         await send({'type': 'http.response.body', 'body': body})
 
     elif method == 'POST' and path == '/hash':
-        body = b''
+        body = bytearray()
         more_body = True
+
         while more_body:
             message = await receive()
-            body += message.get('body', b'')
+            body.extend(message.get('body', b''))
             more_body = message.get('more_body', False)
 
         digest = hashlib.sha256(body).hexdigest().encode('utf-8')
@@ -62,7 +63,7 @@ if __name__ == '__main__':
     config = Config()
     config.bind = ["0.0.0.0:4433"]
     config.quic_bind = ["0.0.0.0:4433"]
-    config.certfile = "server.crt"
-    config.keyfile = "server.key"
-    config.alpn_protocols = ["h3", "h2", "http/1.1"]
+    config.certfile = "certs/server.crt"
+    config.keyfile = "certs/server.key"
+    config.alpn_protocols = ["h2", "http/1.1"]
     asyncio.run(serve(app, config))
